@@ -548,13 +548,18 @@ canonicalize_dir() {
 
 cleanup_stale_fio_artifacts() {
   local d="$1"
+  local find_base=(
+    "$d" -maxdepth 2
+    \( -path "$d"/systemd-private\* -o -path "$d"/*/systemd-private\* \) -prune -o
+    -type f \( -name 'node_bench_fio_testfile.dat' -o -name 'erpc_bench_fio_testfile.dat' \)
+  )
+
   local found
-  found="$(find "$d" -maxdepth 2 -type f \( -name 'node_bench_fio_testfile.dat' -o -name 'erpc_bench_fio_testfile.dat' \) -print 2>/dev/null || true)"
+  found="$(find "${find_base[@]}" -print 2>/dev/null || true)"
   if [[ -n "$found" ]]; then
     note "Removing stale fio test files under $d (depth<=2):"
     echo "$found"
-    find "$d" -maxdepth 2 -type f \( -name 'node_bench_fio_testfile.dat' -o -name 'erpc_bench_fio_testfile.dat' \) -exec rm -f {} + \
-      || fatal "Failed to remove stale fio test files under $d"
+    find "${find_base[@]}" -exec rm -f {} + 2>/dev/null || true
   fi
 }
 
