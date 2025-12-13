@@ -59,6 +59,12 @@ STREAM_BUILD_MESSAGE=""
 STREAM_CC=""
 STREAM_FETCHER=""
 NEEDRESTART_CONFIGURED=0
+STREAM_ARRAY_TOTAL_MB_DEFAULT=4096
+STREAM_ARRAY_TOTAL_MB="${STREAM_ARRAY_TOTAL_MB:-$STREAM_ARRAY_TOTAL_MB_DEFAULT}"
+STREAM_ARRAY_BYTES=0
+STREAM_ARRAY_ELEMENTS=0
+STREAM_SIZE_CHECKED=0
+STREAM_REBUILT=0
 
 # -----------------------------------------------------------------------------
 # CLI flags
@@ -366,14 +372,45 @@ build_stream_from_source() {
   local target="${build_dir}/stream"
   local compile_log="${build_dir}/compile.log"
   local build_variant=""
+  local arr_total_mb="$STREAM_ARRAY_TOTAL_MB"
+
+  # Choose array size (total across 3 arrays) to exceed LLC; clamp to available mem (~70%) to avoid OOM.
+  local memavail_kb
+  memavail_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+  local memavail_bytes=0
+  if [[ -n "$memavail_kb" ]]; then
+    memavail_bytes=$((memavail_kb * 1024))
+  fi
+  local desired_bytes=$((arr_total_mb * 1024 * 1024))
+  local cap_bytes="$desired_bytes"
+  if [[ "$memavail_bytes" -gt 0 ]]; then
+    local cap=$((memavail_bytes * 7 / 10))
+    if [[ "$cap" -gt 0 && "$desired_bytes" -gt "$cap" ]]; then
+      cap_bytes="$cap"
+    fi
+  fi
+  # Require at least 128MiB total to keep runs meaningful.
+  local min_bytes=$((128 * 1024 * 1024))
+  if [[ "$cap_bytes" -lt "$min_bytes" ]]; then
+    cap_bytes="$min_bytes"
+  fi
+  STREAM_ARRAY_BYTES="$cap_bytes"
+  STREAM_ARRAY_ELEMENTS=$((STREAM_ARRAY_BYTES / 8 / 3))
+  if [[ "$STREAM_ARRAY_ELEMENTS" -lt 1000000 ]]; then
+    STREAM_ARRAY_ELEMENTS=1000000
+    STREAM_ARRAY_BYTES=$((STREAM_ARRAY_ELEMENTS * 8 * 3))
+  fi
+  local arr_mb=$((STREAM_ARRAY_BYTES / 1024 / 1024))
+  note "STREAM array sizing: requested ~${arr_total_mb} MiB total; using ~${arr_mb} MiB total across 3 arrays (MemAvailable ~${memavail_bytes} bytes)."
+  local stream_array_flag="-DSTREAM_ARRAY_SIZE=${STREAM_ARRAY_ELEMENTS}"
 
   note "Building STREAM from source using ${cc} (attempting OpenMP, falling back if unavailable)"
-  if "$cc" -O3 -fopenmp "$src" -o "$target" >"$compile_log" 2>&1; then
+  if "$cc" -O3 -fopenmp "$stream_array_flag" "$src" -o "$target" >"$compile_log" 2>&1; then
     chmod +x "$target" || true
     build_variant="with OpenMP"
   else
     note "Retrying STREAM build without OpenMP flags"
-    if "$cc" -O3 "$src" -o "$target" >"$compile_log" 2>&1; then
+    if "$cc" -O3 "$stream_array_flag" "$src" -o "$target" >"$compile_log" 2>&1; then
       chmod +x "$target" || true
       build_variant="without OpenMP"
     else
@@ -400,6 +437,7 @@ build_stream_from_source() {
   hash -r || true
   STREAM_BINARY="$install_target"
   STREAM_BUILD_MESSAGE="Built STREAM from source using ${cc} (${build_variant}) and installed to ${install_target}"
+  STREAM_REBUILT=1
 
   # Clean up build dir and remove RETURN trap for subsequent functions
   rm -rf "$build_dir" >/dev/null 2>&1 || true
@@ -463,6 +501,13 @@ install_stream_with_fallback() {
           STREAM_INSTALL_MESSAGE="Installed '${pkg}' via ${pm}"
           hash -r || true
           STREAM_BINARY="$(command -v stream || echo "stream")"
+          local prev_present="$STREAM_PRESENT"
+          STREAM_PRESENT=1
+          ensure_stream_big_arrays || { STREAM_PRESENT="$prev_present"; return 1; }
+          STREAM_PRESENT="$prev_present"
+          if [[ "${STREAM_REBUILT}" -eq 1 ]]; then
+            STREAM_INSTALL_MESSAGE="${STREAM_INSTALL_MESSAGE}; rebuilt STREAM with large arrays"
+          fi
           return 0
         else
           local exit_code=$?
@@ -574,6 +619,35 @@ cleanup_stale_fio_file() {
   fi
 }
 
+stream_total_mib() {
+  local out
+  out="$({ OMP_NUM_THREADS=1 "${STREAM_BINARY:-stream}" 2>/dev/null; } | awk '/Total memory required/ {for(i=1;i<=NF;i++) if($i=="MiB"){print $(i-1); exit}}' | head -n1)"
+  echo "${out:-0}"
+}
+
+ensure_stream_big_arrays() {
+  [[ "${STREAM_PRESENT}" -eq 1 ]] || return 1
+  [[ "${STREAM_SIZE_CHECKED}" -eq 1 ]] && return 0
+  STREAM_SIZE_CHECKED=1
+
+  local want="${STREAM_ARRAY_TOTAL_MB}"
+  local have_mib
+  have_mib="$(stream_total_mib || echo 0)"
+
+  if [[ "$have_mib" == "0" ]]; then
+    note "STREAM size check: could not parse current stream output; rebuilding STREAM with large arrays."
+    build_stream_from_source || return 1
+    return 0
+  fi
+
+  if (( have_mib + 64 < want )); then
+    note "STREAM size check: current Total memory required ~${have_mib} MiB < target ${want} MiB. Rebuilding STREAM with large arrays."
+    build_stream_from_source || return 1
+  else
+    note "STREAM size check: current Total memory required ~${have_mib} MiB meets target (${want} MiB)."
+  fi
+}
+
 # -----------------------------------------------------------------------------
 # Dependency resolution (CPU/Disk are required; JQ optional)
 # -----------------------------------------------------------------------------
@@ -629,8 +703,12 @@ echo "Summary log:      $SUMMARY"
 note "STREAM availability"
 if have stream; then
   STREAM_PRESENT=1
-  STREAM_INSTALL_MESSAGE="stream already present."
   STREAM_BINARY="$(command -v stream || echo "stream")"
+  ensure_stream_big_arrays || fatal "STREAM is present but could not ensure large-array build."
+  STREAM_INSTALL_MESSAGE="stream already present."
+  if [[ "${STREAM_REBUILT}" -eq 1 ]]; then
+    STREAM_INSTALL_MESSAGE="${STREAM_INSTALL_MESSAGE}; rebuilt STREAM with large arrays"
+  fi
 else
   STREAM_PRESENT=0
   if [[ "${INSTALL_STREAM}" -eq 1 ]]; then
@@ -727,6 +805,9 @@ done
 note "RAM Benchmark: STREAM"
 if [[ "${STREAM_PRESENT}" -eq 1 ]]; then
   echo "Running STREAM (raw output)."
+  export OMP_NUM_THREADS="${VCPUS}"
+  export OMP_PROC_BIND=true
+  export OMP_PLACES=cores
   cmd "${STREAM_BINARY:-stream}"
 else
   echo "STREAM NOT RUN: stream binary unavailable."
