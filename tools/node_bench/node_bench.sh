@@ -633,6 +633,9 @@ ensure_stream_big_arrays() {
   local want="${STREAM_ARRAY_TOTAL_MB}"
   local have_mib
   have_mib="$(stream_total_mib || echo 0)"
+  # stream_total_mib may return decimals; coerce to integer for arithmetic
+  have_mib="${have_mib%%.*}"
+  [[ -z "$have_mib" ]] && have_mib=0
 
   if [[ "$have_mib" == "0" ]]; then
     note "STREAM size check: could not parse current stream output; rebuilding STREAM with large arrays."
