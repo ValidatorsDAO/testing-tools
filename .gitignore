@@ -1,0 +1,13 @@
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+
+# Benchmark outputs
+results/
+
+# Archives / logs
+*.log
+*.tar
+*.tgz
+*.gz
