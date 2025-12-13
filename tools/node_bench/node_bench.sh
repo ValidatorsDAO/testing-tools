@@ -58,6 +58,7 @@ STREAM_BINARY="stream"
 STREAM_BUILD_MESSAGE=""
 STREAM_CC=""
 STREAM_FETCHER=""
+NEEDRESTART_CONFIGURED=0
 
 # -----------------------------------------------------------------------------
 # CLI flags
@@ -170,6 +171,7 @@ pkg_install() {
   SUDO="$(sudo_prefix)"
 
   if have apt-get; then
+    configure_needrestart_quiet || true
     note "Installing dependencies via apt-get: ${pkgs[*]}"
     cmd ${SUDO} apt-get update -y
     cmd ${SUDO} apt-get install -y "${pkgs[@]}"
@@ -185,6 +187,22 @@ pkg_install() {
   else
     fatal "No supported package manager found (apt-get/dnf/yum/apk). Install manually: sysbench fio (jq optional; stream required)."
   fi
+}
+
+configure_needrestart_quiet() {
+  [[ "${NEEDRESTART_CONFIGURED}" -eq 1 ]] && return 0
+  NEEDRESTART_CONFIGURED=1
+
+  have apt-get || return 0
+  need_root_or_sudo || return 0
+
+  local SUDO; SUDO="$(sudo_prefix)"
+  local conf="/etc/needrestart/needrestart.conf"
+  local body='$nrconf{restart} = '\''a'\'';'$'\n''$nrconf{kernelhints} = 0;'$'\n''$nrconf{verbosity} = 0;'
+
+  note "Disabling needrestart prompts (non-interactive)"
+  cmd ${SUDO} mkdir -p /etc/needrestart
+  printf '%s\n' "$body" | cmd ${SUDO} tee "$conf" >/dev/null
 }
 
 ensure_c_compiler_for_stream() {
@@ -205,6 +223,7 @@ ensure_c_compiler_for_stream() {
 
   local SUDO; SUDO="$(sudo_prefix)"
   if have apt-get; then
+    configure_needrestart_quiet || true
     note "Installing gcc for STREAM build via apt-get"
     cmd ${SUDO} apt-get update -y
     if ! cmd ${SUDO} apt-get install -y gcc; then
@@ -268,6 +287,7 @@ ensure_fetcher_for_stream() {
 
   if have apt-get; then
     pm="apt-get"
+    configure_needrestart_quiet || true
     note "Installing curl/wget for STREAM fetch via ${pm}"
     cmd ${SUDO} apt-get update -y
     install_cmd=(${SUDO} apt-get install -y curl wget)
@@ -406,6 +426,7 @@ install_stream_with_fallback() {
 
   if have apt-get; then
     pm="apt-get"
+    configure_needrestart_quiet || true
     update_cmd=(${SUDO} apt-get update -y)
     install_cmd=(${SUDO} apt-get install -y)
   elif have dnf; then
