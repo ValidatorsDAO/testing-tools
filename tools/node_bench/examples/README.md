@@ -4,5 +4,5 @@ This directory holds example run artifacts and metadata for common environments.
 
 Available examples:
 
-- `erpc_vps_amsterdam/` — ERPC VPS (Amsterdam), 4 vCPU / 16GB RAM / 100GB disk (AMD Ryzen 9 9950X slice).
+- `erpc_super_vps_ams_4/` — ERPC Super VPS (Amsterdam), AMD Ryzen 9 9950X slice, 4 vCPU / 16GB RAM / 100GB disk.
 - `gcp_c4d_standard_4/` — Google Cloud c4d-standard-4 (AMD Turin), 4 vCPU / 15GB RAM / 10GB SSD.

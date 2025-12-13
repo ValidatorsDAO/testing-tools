@@ -1,4 +1,4 @@
-# ERPC VPS (Amsterdam) — example
+# ERPC Super VPS AMS (4 vCPU) — example
 
 Machine (from provided panel and run output):
 

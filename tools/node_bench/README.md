@@ -78,5 +78,5 @@ RESULTS_BASE=${RESULTS_DIR:-$HOME/results}; grep -n "extracted metrics" -A20 "$(
 
 Example environments and a place to store collected run artifacts live under `tools/node_bench/examples/`:
 
-- `erpc_vps_amsterdam/` — ERPC VPS (AMD Ryzen 9 9950X slice, 4 vCPU / 16GB RAM / 100GB disk, Amsterdam).
+- `erpc_super_vps_ams_4/` — ERPC Super VPS (AMD Ryzen 9 9950X slice, 4 vCPU / 16GB RAM / 100GB disk, Amsterdam).
 - `gcp_c4d_standard_4/` — Google Cloud c4d-standard-4 (AMD Turin, 4 vCPU / 15GB RAM / 10GB SSD).
