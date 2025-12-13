@@ -6,7 +6,7 @@ Machine (from provided panel and run output):
 - CPU: AMD Ryzen 9 9950X (4 vCPU slice)
 - Memory: 16GB
 - Disk: 100GB
-- OS: Ubuntu
+- OS: Ubuntu24.04
 
 Captured run (fio 4GB, direct=1, time_based=60s, ramp=10s):
 
