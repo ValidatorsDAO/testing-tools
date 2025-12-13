@@ -204,7 +204,8 @@ configure_needrestart_quiet() {
 
   local SUDO; SUDO="$(sudo_prefix)"
   local conf="/etc/needrestart/needrestart.conf"
-  local body='$nrconf{restart} = '\''a'\'';'$'\n''$nrconf{kernelhints} = 0;'$'\n''$nrconf{verbosity} = 0;'
+  # Set needrestart to "list only" to avoid restarting services (e.g., dbus) and dropping SSH.
+  local body='$nrconf{restart} = '\''l'\'';'$'\n''$nrconf{kernelhints} = 0;'$'\n''$nrconf{verbosity} = 0;'
 
   note "Disabling needrestart prompts (non-interactive)"
   cmd ${SUDO} mkdir -p /etc/needrestart

@@ -23,21 +23,25 @@ If you just want to run a performance check on a Linux node, start with `node_be
 
 `node_bench` is a reproducible benchmark that measures CPU, memory (optional), and disk performance at the node level.
 
-Run directly via `curl`:
-
-#### Small disks / test VMs (≈10–20GB root disk)
+Run directly via `curl` (defaults: `--fio-dir /var/tmp`, `--fio-size-gb 32`, `--runtime-sec 60`, `--ramp-sec 10`):
 
 ```bash
-curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh \
-  | bash -s -- --fio-dir /var/tmp --fio-size-gb 4
+curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash
 ```
 
-#### Larger NVMe disks (≈100GB or more available)
+If the root disk is tight (≈10–20GB free), shrink the fio file:
 
 ```bash
-curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh \
-  | bash -s -- --fio-dir /var/tmp --fio-size-gb 64
+curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s -- --fio-size-gb 4
 ```
+
+If you want a longer disk run on a large NVMe volume, bump the size:
+
+```bash
+curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s -- --fio-size-gb 64
+```
+
+`--fio-dir` already defaults to `/var/tmp`; only set it when you need a different mount point.
 
 The script:
 
@@ -84,6 +88,9 @@ Documentation:
 Execution (maintained script):
 
 - [https://storage-for-testing.erpc.global/tools/node_bench.sh](https://storage-for-testing.erpc.global/tools/node_bench.sh)
+
+Community:
+- Join the Validators DAO official Discord for run logs, tips, and Q&A: https://discord.com/invite/C7ZQSrCkYR
 
 ## Viewing Results
 

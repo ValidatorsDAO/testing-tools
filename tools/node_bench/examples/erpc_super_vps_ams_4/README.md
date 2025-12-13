@@ -8,6 +8,12 @@ Machine (from provided panel and run output):
 - OS: Ubuntu24.04
 - Location: Amsterdam
 
+Run notes:
+
+- Command: `curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s -- --fio-size-gb 4`
+- Defaults left intact: `--fio-dir /var/tmp`, `--runtime-sec 60`, `--ramp-sec 10`, `--numjobs 1`, `--ioengine libaio`.
+- Timestamp: 2025-12-13T07:58Z on host `ubuntu` (see `summary.txt` for full log).
+
 Captured run (sysbench cpu, STREAM, fio 4GB direct=1, time_based=60s, ramp=10s):
 
 - CPU (sysbench max prime 20000): 1 thread 1.97k eps, 2 threads 3.94k eps, 4 threads 7.88k eps.
@@ -23,3 +29,6 @@ Artifacts in this folder:
 - `summary.txt` (canonical log)
 - `fio_*.json` (raw fio outputs)
 - Optional notes: network conditions, package versions, sudo usage, etc.
+
+More runs and discussion:
+- Validators DAO official Discord: https://discord.com/invite/C7ZQSrCkYR
