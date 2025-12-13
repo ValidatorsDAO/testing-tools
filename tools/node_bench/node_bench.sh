@@ -404,21 +404,27 @@ build_stream_from_source() {
   note "STREAM array sizing: requested ~${arr_total_mb} MiB total; using ~${arr_mb} MiB total across 3 arrays (MemAvailable ~${memavail_bytes} bytes)."
   local stream_array_flag="-DSTREAM_ARRAY_SIZE=${STREAM_ARRAY_ELEMENTS}"
 
-  note "Building STREAM from source using ${cc} (attempting OpenMP, falling back if unavailable)"
-  if "$cc" -O3 -fopenmp "$stream_array_flag" "$src" -o "$target" >"$compile_log" 2>&1; then
-    chmod +x "$target" || true
-    build_variant="with OpenMP"
-  else
-    note "Retrying STREAM build without OpenMP flags"
-    if "$cc" -O3 "$stream_array_flag" "$src" -o "$target" >"$compile_log" 2>&1; then
-      chmod +x "$target" || true
-      build_variant="without OpenMP"
-    else
-      local tail_log
-      tail_log="$(tail -n 20 "$compile_log" 2>/dev/null || true)"
-      STREAM_BUILD_MESSAGE="Failed to build STREAM from source with ${cc}${tail_log:+; tail of build log:\n${tail_log}}"
-      return 1
-    fi
+  note "Building STREAM from source using ${cc} (attempting OpenMP, medium model; falling back if unavailable)"
+  local built=0
+  local model_flags=("-mcmodel=medium" "-mcmodel=large" "")
+  local omp_flags=("-fopenmp" "")
+  for mcmodel in "${model_flags[@]}"; do
+    for omp in "${omp_flags[@]}"; do
+      : >"$compile_log" 2>/dev/null || true
+      if "$cc" -O3 -fno-pie -no-pie ${mcmodel:+$mcmodel} ${omp:+$omp} "$stream_array_flag" "$src" -o "$target" >"$compile_log" 2>&1; then
+        chmod +x "$target" || true
+        build_variant="${mcmodel:-default}${omp:+, with OpenMP}"
+        built=1
+        break 2
+      fi
+    done
+  done
+
+  if [[ "$built" -ne 1 ]]; then
+    local tail_log
+    tail_log="$(tail -n 20 "$compile_log" 2>/dev/null || true)"
+    STREAM_BUILD_MESSAGE="Failed to build STREAM from source with ${cc}${tail_log:+; tail of build log:\n${tail_log}}"
+    return 1
   fi
 
   local install_target="/usr/local/bin/stream"
