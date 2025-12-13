@@ -6,24 +6,23 @@ set -Eeuo pipefail
 #
 # Reproducible node benchmark for Linux (VPS / Bare Metal / Cloud).
 #
+# Policy (default behavior):
+# - Auto-install required tools by default (AUTO_INSTALL=1).
+# - CPU / Memory / Disk are treated equally: if any required benchmark tool
+#   cannot run (sysbench/fio/stream), the run is considered invalid and fails.
+#
 # Benchmarks:
 # - CPU: sysbench cpu (thread sweep)
-# - RAM: STREAM (optional; runs only if `stream` exists)
+# - RAM: STREAM (required by default; auto-installs if missing)
 # - Disk: fio (direct I/O, fixed profiles; JSON + extracted metrics)
 #
 # Output (default base: $HOME/results or override RESULTS_DIR):
 # - $HOME/results/<hostname>_<UTC timestamp>/summary.txt
 # - $HOME/results/<hostname>_<UTC timestamp>/fio_*.json
-#
-# Copyright notice:
-# - A short notice is printed to console and recorded in summary.txt.
-#
-# Usage (curl|bash friendly):
-#   curl -fsSL <url>/node_bench.sh | bash -s -- --fio-dir /var/tmp --fio-size-gb 4
 ###############################################################################
 
 # -----------------------------------------------------------------------------
-# Bash guard: if someone runs this with /bin/sh (dash), error out explicitly.
+# Bash guard
 # -----------------------------------------------------------------------------
 if [[ -z "${BASH_VERSION:-}" ]]; then
   echo "ERROR: This script requires bash. Do not run with 'sh'." >&2
@@ -34,21 +33,27 @@ fi
 # -----------------------------------------------------------------------------
 # Defaults (override via args or environment)
 # -----------------------------------------------------------------------------
-AUTO_INSTALL="${AUTO_INSTALL:-1}"          # 1=install missing deps if possible, 0=do not install
-INSTALL_JQ="${INSTALL_JQ:-1}"              # 1=best-effort install jq, 0=skip
-INSTALL_STREAM="${INSTALL_STREAM:-0}"      # STREAM packaging differs; default off
-FIO_DIR="${FIO_DIR:-/var/tmp}"             # writeable directory on the target disk
-FIO_SIZE_GB="${FIO_SIZE_GB:-32}"           # per-job data size
-FIO_RUNTIME_SEC="${FIO_RUNTIME_SEC:-60}"   # steady-state run time
-FIO_RAMP_SEC="${FIO_RAMP_SEC:-10}"         # warmup time
+AUTO_INSTALL="${AUTO_INSTALL:-1}"                 # default: auto-install deps
+INSTALL_JQ="${INSTALL_JQ:-1}"                     # default: best-effort install jq
+INSTALL_STREAM="${INSTALL_STREAM:-1}"             # default: STREAM required + auto-install
+ALLOW_MISSING_STREAM="${ALLOW_MISSING_STREAM:-0}" # default: do NOT allow missing STREAM
+
+FIO_DIR="${FIO_DIR:-/var/tmp}"
+FIO_SIZE_GB="${FIO_SIZE_GB:-32}"
+FIO_RUNTIME_SEC="${FIO_RUNTIME_SEC:-60}"
+FIO_RAMP_SEC="${FIO_RAMP_SEC:-10}"
 FIO_NUMJOBS="${FIO_NUMJOBS:-1}"
 FIO_IOENGINE="${FIO_IOENGINE:-libaio}"
 SYSBENCH_CPU_MAX_PRIME="${SYSBENCH_CPU_MAX_PRIME:-20000}"
 RESULTS_DIR="${RESULTS_DIR:-}"
 
-# Thread sweep (will be clamped to available vCPUs)
 CPU_THREADS_LIST_DEFAULT=("1" "2" "4" "8" "16" "32")
 CPU_THREADS_LIST=("${CPU_THREADS_LIST_DEFAULT[@]}")
+
+STREAM_INSTALL_ATTEMPTED=0
+STREAM_INSTALL_MESSAGE=""
+STREAM_INSTALL_PACKAGE=""
+STREAM_PRESENT=0
 
 # -----------------------------------------------------------------------------
 # CLI flags
@@ -60,8 +65,8 @@ Usage:
 
 Options:
   --no-install                 Do not install missing dependencies (fail instead)
-  --install-stream             Best-effort install 'stream' (optional; may not exist on your distro)
   --no-jq                      Do not install/use jq (JSON extraction will be skipped)
+  --allow-missing-stream       Continue without STREAM even if unavailable (NOT recommended)
   --fio-dir DIR                Directory to place fio test file (must be writable)
   --fio-size-gb N              fio file size in GB (default: 32)
   --runtime-sec N              fio runtime in seconds (default: 60)
@@ -72,17 +77,15 @@ Options:
   -h, --help                   Show this help
 
 Examples:
-  curl -fsSL https://host/node_bench.sh | bash -s --
   curl -fsSL https://host/node_bench.sh | bash -s -- --fio-dir /var/tmp --fio-size-gb 4
-  curl -fsSL https://host/node_bench.sh | sudo bash -s -- --fio-dir /mnt/nvme --fio-size-gb 64
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-install) AUTO_INSTALL=0; shift ;;
-    --install-stream) INSTALL_STREAM=1; shift ;;
     --no-jq) INSTALL_JQ=0; shift ;;
+    --allow-missing-stream) ALLOW_MISSING_STREAM=1; shift ;;
     --fio-dir) FIO_DIR="$2"; shift 2 ;;
     --fio-size-gb) FIO_SIZE_GB="$2"; shift 2 ;;
     --runtime-sec) FIO_RUNTIME_SEC="$2"; shift 2 ;;
@@ -128,7 +131,7 @@ on_error() {
   echo "  - Run with bash (not sh): curl ... | bash -s --" >&2
   echo "  - Ensure FIO_DIR exists and is writable" >&2
   echo "  - Ensure enough free disk space for --fio-size-gb + overhead" >&2
-  echo "  - If auto-install is enabled, ensure sudo is permitted (or run as root)" >&2
+  echo "  - Ensure sudo is permitted non-interactively (or run as root) for auto-install" >&2
   exit "${exit_code}"
 }
 trap on_error ERR
@@ -155,11 +158,9 @@ sudo_prefix() {
 pkg_install() {
   local pkgs=("$@")
 
-  [[ "${AUTO_INSTALL}" -eq 1 ]] || fatal "Missing dependencies: ${pkgs[*]} (auto-install disabled)."
+  [[ "${AUTO_INSTALL}" -eq 1 ]] || fatal "Missing dependencies: ${pkgs[*]} (auto-install disabled via --no-install)."
 
-  if ! need_root_or_sudo; then
-    fatal "Auto-install requested but cannot use sudo non-interactively. Run as root or pre-install: ${pkgs[*]}"
-  fi
+  need_root_or_sudo || fatal "Auto-install is default, but sudo is not available non-interactively. Run as root or pre-install: ${pkgs[*]}"
 
   local SUDO
   SUDO="$(sudo_prefix)"
@@ -178,8 +179,69 @@ pkg_install() {
     note "Installing dependencies via apk: ${pkgs[*]}"
     cmd ${SUDO} apk add --no-cache "${pkgs[@]}"
   else
-    fatal "No supported package manager found (apt-get/dnf/yum/apk). Install manually: sysbench fio (optional: jq, stream)."
+    fatal "No supported package manager found (apt-get/dnf/yum/apk). Install manually: sysbench fio (jq optional; stream required)."
   fi
+}
+
+install_stream_with_fallback() {
+  STREAM_INSTALL_ATTEMPTED=1
+  STREAM_INSTALL_MESSAGE=""
+  STREAM_INSTALL_PACKAGE=""
+
+  if [[ "${AUTO_INSTALL}" -ne 1 ]]; then
+    STREAM_INSTALL_MESSAGE="Install not attempted: auto-install disabled (--no-install or AUTO_INSTALL=0)."
+    return 1
+  fi
+
+  need_root_or_sudo || { STREAM_INSTALL_MESSAGE="Cannot install: sudo not available non-interactively (or not root)."; return 1; }
+
+  local SUDO; SUDO="$(sudo_prefix)"
+
+  local pm=""
+  local update_cmd=()
+  local install_cmd=()
+
+  if have apt-get; then
+    pm="apt-get"
+    update_cmd=(${SUDO} apt-get update -y)
+    install_cmd=(${SUDO} apt-get install -y)
+  elif have dnf; then
+    pm="dnf"
+    install_cmd=(${SUDO} dnf install -y)
+  elif have yum; then
+    pm="yum"
+    install_cmd=(${SUDO} yum install -y)
+  elif have apk; then
+    pm="apk"
+    install_cmd=(${SUDO} apk add --no-cache)
+  else
+    STREAM_INSTALL_MESSAGE="No supported package manager found for stream (need apt-get/dnf/yum/apk)."
+    return 1
+  fi
+
+  local candidates=("stream" "stream-benchmark")
+
+  if [[ "${#update_cmd[@]}" -gt 0 ]]; then
+    note "Updating package index via ${pm} for STREAM"
+    cmd "${update_cmd[@]}" || { STREAM_INSTALL_MESSAGE="${pm} update failed while preparing to install stream."; return 1; }
+  fi
+
+  local last_error=""
+  for pkg in "${candidates[@]}"; do
+    note "Attempting to install STREAM via ${pm}: package '${pkg}'"
+    if cmd "${install_cmd[@]}" "$pkg"; then
+      STREAM_INSTALL_PACKAGE="$pkg"
+      STREAM_INSTALL_MESSAGE="Installed '${pkg}' via ${pm}"
+      hash -r || true
+      return 0
+    else
+      local exit_code=$?
+      last_error="${pm} install exited ${exit_code} for package '${pkg}'"
+    fi
+  done
+
+  STREAM_INSTALL_MESSAGE="STREAM install failed via ${pm} (tried: ${candidates[*]}${last_error:+; last error: ${last_error}})"
+  return 1
 }
 
 clamp_threads() {
@@ -237,6 +299,18 @@ canonicalize_dir() {
   fi
 }
 
+cleanup_stale_fio_artifacts() {
+  local d="$1"
+  local found
+  found="$(find "$d" -maxdepth 2 -type f \( -name 'node_bench_fio_testfile.dat' -o -name 'erpc_bench_fio_testfile.dat' \) -print 2>/dev/null || true)"
+  if [[ -n "$found" ]]; then
+    note "Removing stale fio test files under $d (depth<=2):"
+    echo "$found"
+    find "$d" -maxdepth 2 -type f \( -name 'node_bench_fio_testfile.dat' -o -name 'erpc_bench_fio_testfile.dat' \) -exec rm -f {} + \
+      || fatal "Failed to remove stale fio test files under $d"
+  fi
+}
+
 cleanup_stale_fio_file() {
   local f="$1"
   if [[ -f "$f" ]]; then
@@ -248,19 +322,8 @@ cleanup_stale_fio_file() {
   fi
 }
 
-cleanup_stale_fio_artifacts() {
-  local d="$1"
-  local found
-  found="$(find "$d" -maxdepth 2 -type f \( -name 'node_bench_fio_testfile.dat' -o -name 'erpc_bench_fio_testfile.dat' \) -print 2>/dev/null || true)"
-  if [[ -n "$found" ]]; then
-    note "Removing stale fio test files under $d (depth<=2):"
-    echo "$found"
-    find "$d" -maxdepth 2 -type f \( -name 'node_bench_fio_testfile.dat' -o -name 'erpc_bench_fio_testfile.dat' \) -exec rm -f {} + || fatal "Failed to remove stale fio test files under $d"
-  fi
-}
-
 # -----------------------------------------------------------------------------
-# Dependency resolution
+# Dependency resolution (CPU/Disk are required; JQ optional)
 # -----------------------------------------------------------------------------
 note "Dependency check"
 missing=()
@@ -272,15 +335,7 @@ if [[ "${#missing[@]}" -gt 0 ]]; then
 fi
 
 if [[ "${INSTALL_JQ}" -eq 1 ]] && ! have jq; then
-  if [[ "${AUTO_INSTALL}" -eq 1 ]]; then
-    pkg_install jq || true
-  fi
-fi
-
-if [[ "${INSTALL_STREAM}" -eq 1 ]] && ! have stream; then
-  if [[ "${AUTO_INSTALL}" -eq 1 ]]; then
-    pkg_install stream || true
-  fi
+  pkg_install jq || true
 fi
 
 have sysbench || fatal "sysbench not found after install attempt."
@@ -307,18 +362,44 @@ OUTDIR="${RESULTS_BASE}/${HOST}_${TS}"
 mkdir -p "$OUTDIR"
 SUMMARY="${OUTDIR}/summary.txt"
 
-# Make ALL subsequent output go to console AND summary.txt
 exec > >(tee -a "$SUMMARY") 2>&1
 
-# -----------------------------------------------------------------------------
-# Copyright / attribution line (requested)
-# -----------------------------------------------------------------------------
 COPYRIGHT_LINE="Copyright (c) ELSOUL LABO B.V. and Validators DAO. All rights reserved."
 echo "$COPYRIGHT_LINE"
 
 note "Benchmark started"
 echo "Output directory: $OUTDIR"
 echo "Summary log:      $SUMMARY"
+
+# -----------------------------------------------------------------------------
+# STREAM availability (required by default; auto-install if missing)
+# -----------------------------------------------------------------------------
+note "STREAM availability"
+if have stream; then
+  STREAM_PRESENT=1
+  STREAM_INSTALL_MESSAGE="stream already present."
+else
+  STREAM_PRESENT=0
+  if [[ "${INSTALL_STREAM}" -eq 1 ]]; then
+    if install_stream_with_fallback; then
+      STREAM_PRESENT=1
+    fi
+  else
+    STREAM_INSTALL_MESSAGE="STREAM install disabled by config (INSTALL_STREAM=0)."
+  fi
+fi
+
+echo "STREAM_STATUS=$([[ "$STREAM_PRESENT" -eq 1 ]] && echo "present" || echo "absent")"
+echo "STREAM_INSTALL_ATTEMPTED=$([[ "$STREAM_INSTALL_ATTEMPTED" -eq 1 ]] && echo "yes" || echo "no")"
+[[ -n "$STREAM_INSTALL_PACKAGE" ]] && echo "STREAM_INSTALL_PACKAGE=${STREAM_INSTALL_PACKAGE}"
+[[ -n "$STREAM_INSTALL_MESSAGE" ]] && echo "STREAM_NOTE=${STREAM_INSTALL_MESSAGE}"
+
+if [[ "$STREAM_PRESENT" -eq 0 && "$ALLOW_MISSING_STREAM" -eq 1 ]]; then
+  echo "STREAM_NOT_MEASURED=1 (allowed by --allow-missing-stream)"
+fi
+if [[ "$STREAM_PRESENT" -eq 0 && "$ALLOW_MISSING_STREAM" -ne 1 ]]; then
+  fatal "STREAM binary not available; memory benchmark cannot run. ${STREAM_INSTALL_MESSAGE:-"Install failed or was skipped."} (Use --allow-missing-stream only if you explicitly accept missing memory results.)"
+fi
 
 # -----------------------------------------------------------------------------
 # Sanity checks for fio dir
@@ -330,12 +411,14 @@ ensure_dir_writable "$FIO_DIR"
 
 FIO_DIR="$(canonicalize_dir "$FIO_DIR")"
 [[ -n "$FIO_DIR" && "$FIO_DIR" = /* ]] || fatal "Failed to canonicalize FIO_DIR to an absolute path."
-FIO_FILE="${FIO_DIR%/}/node_bench_fio_testfile.dat"
-[[ "$FIO_FILE" == "$FIO_DIR/"* ]] || fatal "Internal path error: FIO_FILE is not under FIO_DIR."
+
+# IMPORTANT: keep the on-disk filename relative to --directory to avoid path interpretation issues.
+FIO_FILENAME="node_bench_fio_testfile.dat"
+FIO_FILE="${FIO_DIR%/}/${FIO_FILENAME}"
+
 cleanup_stale_fio_artifacts "$FIO_DIR"
 cleanup_stale_fio_file "$FIO_FILE"
 
-# free space check (size per job + ~1GB cushion)
 NEEDED_KB=$((FIO_SIZE_GB * 1024 * 1024 + 1024 * 1024))
 check_free_space "$FIO_DIR" "$NEEDED_KB"
 
@@ -359,7 +442,7 @@ echo "Tools:"
 echo "  sysbench: $(sysbench --version 2>/dev/null | head -n1 || true)"
 echo "  fio:      $(fio --version 2>/dev/null || true)"
 echo "  jq:       $(jq --version 2>/dev/null || echo 'n/a')"
-echo "  stream:   $([[ -n "$(command -v stream 2>/dev/null || true)" ]] && echo "present" || echo "absent")"
+echo "  stream:   $(have stream && echo present || echo absent)"
 
 note "Hardware / OS details"
 cmd bash -lc 'echo "--- lscpu ---"; lscpu || true; echo; echo "--- free -h ---"; free -h || true; echo; echo "--- lsblk ---"; lsblk -o NAME,TYPE,SIZE,MODEL,ROTA,MOUNTPOINT,FSTYPE || true; echo; echo "--- df -hT ---"; df -hT || true'
@@ -379,15 +462,16 @@ for t in "${THREADS_LIST[@]}"; do
 done
 
 # -----------------------------------------------------------------------------
-# RAM Benchmark: STREAM (optional)
+# RAM Benchmark: STREAM
 # -----------------------------------------------------------------------------
-note "RAM Benchmark: STREAM (optional)"
-if have stream; then
+note "RAM Benchmark: STREAM"
+if [[ "${STREAM_PRESENT}" -eq 1 ]]; then
   echo "Running STREAM (raw output)."
   cmd stream
 else
-  echo "STREAM skipped: 'stream' binary not found."
-  echo "If you want STREAM results, provide a 'stream' binary in PATH or run with --install-stream (best-effort)."
+  echo "STREAM NOT RUN: stream binary unavailable."
+  echo "Reason: ${STREAM_INSTALL_MESSAGE:-unknown}"
+  echo "Proceeding without memory results because --allow-missing-stream was provided."
 fi
 
 # -----------------------------------------------------------------------------
@@ -395,7 +479,7 @@ fi
 # -----------------------------------------------------------------------------
 note "Disk Benchmark: fio"
 echo "fio will create a test file:"
-echo "  $FIO_FILE"
+echo "  ${FIO_FILE}"
 echo "Profiles:"
 echo "  - 4K randread QD1 / QD32"
 echo "  - 4K randwrite QD1 / QD32"
@@ -407,7 +491,7 @@ echo
 
 FIO_COMMON_OPTS=(
   "--directory=${FIO_DIR}"
-  "--filename=${FIO_FILE}"
+  "--filename=${FIO_FILENAME}"
   "--ioengine=${FIO_IOENGINE}"
   "--direct=1"
   "--time_based=1"
@@ -472,7 +556,7 @@ fio_run "fio_4k_randrw_70r30_qd16" --rw=randrw --rwmixread=70 --bs=4k --iodepth=
 # Cleanup
 # -----------------------------------------------------------------------------
 note "Cleanup"
-echo "Removing fio test file: $FIO_FILE"
+echo "Removing fio test file: ${FIO_FILE}"
 rm -f "$FIO_FILE" || true
 
 # -----------------------------------------------------------------------------

@@ -6,6 +6,7 @@ Machine configuration:
 - CPU platform: AMD Turin (5th Gen AMD EPYC)
 - Architecture: x86_64
 - Disk: 10GB SSD (assumed root disk)
+- OS: Ubuntu24.04
 
 Captured run (fio 4GB, direct=1, time_based=60s, ramp=10s):
 
