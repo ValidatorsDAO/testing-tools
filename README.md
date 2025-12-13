@@ -57,7 +57,7 @@ What it measures:
   Using `sysbench` with a multi-thread sweep.
 
 - **Memory**
-  Using STREAM, if available on the system (optional).
+  Using STREAM (auto-installed or built from source; skip with `--allow-missing-stream` if you accept missing memory results).
 
 - **Disk**
   Using `fio` with:
