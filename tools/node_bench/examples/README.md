@@ -4,5 +4,5 @@ This directory holds example run artifacts and metadata for common environments.
 
 Available examples:
 
-- `validators_vps_amsterdam/` — Validators DAO VPS (Amsterdam), 4 vCPU / 16GB RAM / 100GB disk.
+- `erpc_vps_amsterdam/` — ERPC VPS (Amsterdam), 4 vCPU / 16GB RAM / 100GB disk (AMD Ryzen 9 9950X slice).
 - `gcp_c4d_standard_4/` — Google Cloud c4d-standard-4 (AMD Turin), 4 vCPU / 15GB RAM / 10GB SSD.
