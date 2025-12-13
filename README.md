@@ -90,7 +90,8 @@ Execution (maintained script):
 - [https://storage-for-testing.erpc.global/tools/node_bench.sh](https://storage-for-testing.erpc.global/tools/node_bench.sh)
 
 Community:
-- Join the Validators DAO official Discord for run logs, tips, and Q&A: https://discord.com/invite/C7ZQSrCkYR
+- Join the Validators DAO official Discord for active benchmarking chatter, run logs, and Q&A: https://discord.com/invite/C7ZQSrCkYR
+- Pull requests with new run results or examples are welcome.
 
 ## Viewing Results
 

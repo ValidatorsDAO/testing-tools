@@ -19,8 +19,10 @@ How to add/update an example:
 Available examples:
 
 - `erpc_vps_ams_4/` — ERPC VPS (Amsterdam), AMD Turin (EPYC), 4 vCPU / 16GB RAM / 50GB disk.
+- `erpc_vps_fra_4_4g/` — ERPC VPS (Frankfurt), AMD Genoa (EPYC), 4 vCPU / 16GB RAM / 50GB disk.
 - `erpc_super_vps_ams_4/` — ERPC Super VPS (Amsterdam), AMD Ryzen 9 9950X slice, 4 vCPU / 16GB RAM / 100GB disk.
 - `gcp_c4d_standard_4/` — Google Cloud c4d-standard-4 (AMD Turin), 4 vCPU / 15GB RAM / 10GB SSD.
 
 More runs and discussion:
-- Validators DAO official Discord: https://discord.com/invite/C7ZQSrCkYR
+- Validators DAO official Discord (active benchmarking chatter): https://discord.com/invite/C7ZQSrCkYR
+- PRs with new runs/results are welcome.
