@@ -323,7 +323,8 @@ build_stream_from_source() {
   local build_dir
   build_dir="$(mktemp -d /tmp/node_bench_stream_XXXXXX 2>/dev/null || true)"
   [[ -n "$build_dir" ]] || { STREAM_BUILD_MESSAGE="Failed to create temporary directory for STREAM build."; return 1; }
-  trap 'rm -rf "$build_dir" >/dev/null 2>&1' RETURN
+  local cleanup_cmd="rm -rf \"$build_dir\" >/dev/null 2>&1"
+  trap "$cleanup_cmd" RETURN
 
   local src="${build_dir}/stream.c"
   local url="https://www.cs.virginia.edu/stream/FTP/Code/stream.c"
@@ -379,6 +380,10 @@ build_stream_from_source() {
   hash -r || true
   STREAM_BINARY="$install_target"
   STREAM_BUILD_MESSAGE="Built STREAM from source using ${cc} (${build_variant}) and installed to ${install_target}"
+
+  # Clean up build dir and remove RETURN trap for subsequent functions
+  rm -rf "$build_dir" >/dev/null 2>&1 || true
+  trap - RETURN
   return 0
 }
 
