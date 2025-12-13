@@ -56,6 +56,8 @@ STREAM_INSTALL_PACKAGE=""
 STREAM_PRESENT=0
 STREAM_BINARY="stream"
 STREAM_BUILD_MESSAGE=""
+STREAM_CC=""
+STREAM_FETCHER=""
 
 # -----------------------------------------------------------------------------
 # CLI flags
@@ -186,10 +188,12 @@ pkg_install() {
 }
 
 ensure_c_compiler_for_stream() {
+  STREAM_CC=""
+
   local cc
   cc="$(command -v cc || command -v gcc || command -v clang || true)"
   if [[ -n "$cc" ]]; then
-    echo "$cc"
+    STREAM_CC="$cc"
     return 0
   fi
 
@@ -236,64 +240,146 @@ ensure_c_compiler_for_stream() {
     return 1
   fi
 
-  echo "$cc"
+  STREAM_CC="$cc"
+  return 0
+}
+
+ensure_fetcher_for_stream() {
+  STREAM_FETCHER=""
+
+  if have curl; then
+    STREAM_FETCHER="curl"
+    return 0
+  fi
+  if have wget; then
+    STREAM_FETCHER="wget"
+    return 0
+  fi
+
+  [[ "${AUTO_INSTALL}" -eq 1 ]] || { STREAM_BUILD_MESSAGE="Cannot fetch STREAM source: need curl or wget and auto-install is disabled (--no-install or AUTO_INSTALL=0)."; return 1; }
+  if ! need_root_or_sudo; then
+    STREAM_BUILD_MESSAGE="Cannot fetch STREAM source: curl/wget missing and sudo/root is not available non-interactively."
+    return 1
+  fi
+
+  local SUDO; SUDO="$(sudo_prefix)"
+  local pm=""
+  local install_cmd=()
+
+  if have apt-get; then
+    pm="apt-get"
+    note "Installing curl/wget for STREAM fetch via ${pm}"
+    cmd ${SUDO} apt-get update -y
+    install_cmd=(${SUDO} apt-get install -y curl wget)
+  elif have dnf; then
+    pm="dnf"
+    note "Installing curl/wget for STREAM fetch via ${pm}"
+    install_cmd=(${SUDO} dnf install -y curl wget)
+  elif have yum; then
+    pm="yum"
+    note "Installing curl/wget for STREAM fetch via ${pm}"
+    install_cmd=(${SUDO} yum install -y curl wget)
+  elif have apk; then
+    pm="apk"
+    note "Installing curl/wget for STREAM fetch via ${pm}"
+    install_cmd=(${SUDO} apk add --no-cache curl wget)
+  else
+    STREAM_BUILD_MESSAGE="Cannot fetch STREAM source: no supported package manager to install curl/wget (need apt-get/dnf/yum/apk)."
+    return 1
+  fi
+
+  if ! cmd "${install_cmd[@]}"; then
+    local exit_code=$?
+    STREAM_BUILD_MESSAGE="Failed to install curl/wget via ${pm} (exit ${exit_code})."
+    return 1
+  fi
+
+  hash -r || true
+  if have curl; then
+    STREAM_FETCHER="curl"
+    return 0
+  fi
+  if have wget; then
+    STREAM_FETCHER="wget"
+    return 0
+  fi
+
+  STREAM_BUILD_MESSAGE="Cannot fetch STREAM source: curl/wget still unavailable after install attempt."
+  return 1
 }
 
 build_stream_from_source() {
   STREAM_BUILD_MESSAGE=""
 
-  local cc
-  cc="$(ensure_c_compiler_for_stream)" || return 1
+  if ! ensure_c_compiler_for_stream; then
+    return 1
+  fi
+  local cc="$STREAM_CC"
+  if ! ensure_fetcher_for_stream; then
+    return 1
+  fi
+  local fetcher="$STREAM_FETCHER"
 
   local build_dir
   build_dir="$(mktemp -d /tmp/node_bench_stream_XXXXXX 2>/dev/null || true)"
   [[ -n "$build_dir" ]] || { STREAM_BUILD_MESSAGE="Failed to create temporary directory for STREAM build."; return 1; }
+  trap 'rm -rf "$build_dir" >/dev/null 2>&1' RETURN
 
   local src="${build_dir}/stream.c"
   local url="https://www.cs.virginia.edu/stream/FTP/Code/stream.c"
 
-  if have curl; then
+  if [[ "$fetcher" == "curl" ]]; then
     note "Fetching STREAM source from ${url}"
     if ! curl -fsSL "$url" -o "$src"; then
       STREAM_BUILD_MESSAGE="Failed to download STREAM source from ${url}"
       return 1
     fi
-  elif have wget; then
+  else
     note "Fetching STREAM source from ${url} (via wget)"
     if ! wget -qO "$src" "$url"; then
       STREAM_BUILD_MESSAGE="Failed to download STREAM source from ${url}"
       return 1
     fi
-  else
-    STREAM_BUILD_MESSAGE="Cannot fetch STREAM source: need curl or wget."
-    return 1
   fi
 
   local target="${build_dir}/stream"
   local compile_log="${build_dir}/compile.log"
+  local build_variant=""
 
   note "Building STREAM from source using ${cc} (attempting OpenMP, falling back if unavailable)"
   if "$cc" -O3 -fopenmp "$src" -o "$target" >"$compile_log" 2>&1; then
     chmod +x "$target" || true
-    PATH="$(dirname "$target"):$PATH"
-    STREAM_BINARY="$target"
-    STREAM_BUILD_MESSAGE="Built STREAM from source using ${cc} with OpenMP (path: ${target})"
-    return 0
+    build_variant="with OpenMP"
+  else
+    note "Retrying STREAM build without OpenMP flags"
+    if "$cc" -O3 "$src" -o "$target" >"$compile_log" 2>&1; then
+      chmod +x "$target" || true
+      build_variant="without OpenMP"
+    else
+      local tail_log
+      tail_log="$(tail -n 20 "$compile_log" 2>/dev/null || true)"
+      STREAM_BUILD_MESSAGE="Failed to build STREAM from source with ${cc}${tail_log:+; tail of build log:\n${tail_log}}"
+      return 1
+    fi
   fi
 
-  note "Retrying STREAM build without OpenMP flags"
-  if "$cc" -O3 "$src" -o "$target" >"$compile_log" 2>&1; then
-    chmod +x "$target" || true
-    PATH="$(dirname "$target"):$PATH"
-    STREAM_BINARY="$target"
-    STREAM_BUILD_MESSAGE="Built STREAM from source using ${cc} (no OpenMP) (path: ${target})"
-    return 0
+  local install_target="/usr/local/bin/stream"
+  local SUDO; SUDO="$(sudo_prefix)"
+  if ! need_root_or_sudo; then
+    STREAM_BUILD_MESSAGE="Built STREAM binary (${build_variant}) but cannot install to ${install_target}: sudo/root not available non-interactively."
+    return 1
   fi
 
-  local tail_log
-  tail_log="$(tail -n 20 "$compile_log" 2>/dev/null || true)"
-  STREAM_BUILD_MESSAGE="Failed to build STREAM from source with ${cc}${tail_log:+; tail of build log:\n${tail_log}}"
-  return 1
+  note "Installing STREAM binary to ${install_target}"
+  if ! cmd ${SUDO} install -m 0755 "$target" "$install_target"; then
+    STREAM_BUILD_MESSAGE="Built STREAM binary (${build_variant}) but failed to install to ${install_target}."
+    return 1
+  fi
+
+  hash -r || true
+  STREAM_BINARY="$install_target"
+  STREAM_BUILD_MESSAGE="Built STREAM from source using ${cc} (${build_variant}) and installed to ${install_target}"
+  return 0
 }
 
 install_stream_with_fallback() {
