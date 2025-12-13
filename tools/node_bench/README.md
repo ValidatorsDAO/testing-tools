@@ -87,9 +87,12 @@ RESULTS_BASE=${RESULTS_DIR:-$HOME/results}; grep -n "extracted metrics" -A20 "$(
 Example environments and a place to store collected run artifacts live under `tools/node_bench/examples/`:
 
 - `erpc_vps_ams_4/` — ERPC VPS (AMD Turin / EPYC, 4 vCPU / 16GB RAM / 50GB disk, Amsterdam).
+- `erpc_vps_fra_4_4g/` — ERPC VPS (AMD Genoa / EPYC, 4 vCPU / 16GB RAM / 50GB disk, Frankfurt).
 - `erpc_super_vps_ams_4/` — ERPC Super VPS (AMD Ryzen 9 9950X slice, 4 vCPU / 16GB RAM / 100GB disk, Amsterdam).
 - `gcp_c4d_standard_4/` — Google Cloud c4d-standard-4 (AMD Turin, 4 vCPU / 15GB RAM / 10GB SSD).
 
 ## Community
 
-Join the Validators DAO official Discord for run reports, tips, and Q&A: https://discord.com/invite/C7ZQSrCkYR
+Join the Validators DAO official Discord for active benchmarking discussion, run reports, and Q&A: https://discord.com/invite/C7ZQSrCkYR
+
+Pull requests with new run artifacts/examples are welcome.

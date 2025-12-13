@@ -31,4 +31,8 @@ Artifacts in this folder:
 - Optional notes: network conditions, package versions, sudo usage, etc.
 
 More runs and discussion:
+- Validators DAO official Discord (active benchmarking chatter): https://discord.com/invite/C7ZQSrCkYR
+- PRs with new runs/results are welcome.
+
+More runs and discussion:
 - Validators DAO official Discord: https://discord.com/invite/C7ZQSrCkYR
