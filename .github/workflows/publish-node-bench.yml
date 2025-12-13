@@ -1,0 +1,32 @@
+name: Publish node_bench to R2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/node_bench/node_bench.sh"
+  workflow_dispatch:
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload script to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REGION: auto
+          AWS_EC2_METADATA_DISABLED: true
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          file="tools/node_bench/node_bench.sh"
+          [[ -f "$file" ]] || { echo "missing $file"; exit 1; }
+          aws s3 cp "$file" "s3://${R2_BUCKET}/tools/node_bench.sh" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "text/x-shellscript" \
+            --cache-control "no-cache"

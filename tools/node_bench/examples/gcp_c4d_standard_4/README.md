@@ -1,26 +1,21 @@
 # Google Cloud c4d-standard-4 (AMD Turin) — example
 
 Machine configuration:
+
 - Machine type: c4d-standard-4 (4 vCPUs, 15GB memory)
-- CPU platform: AMD Turin
+- CPU platform: AMD Turin (5th Gen AMD EPYC)
 - Architecture: x86_64
 - Disk: 10GB SSD (assumed root disk)
-- Minimum CPU platform: None
 
-Recommended run command (small disk):
-```bash
-curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh \
-  | bash -s -- --fio-dir /var/tmp --fio-size-gb 4
-```
+Captured run (fio 4GB, direct=1, time_based=60s, ramp=10s):
 
-Collecting results into this folder:
-```bash
-RESULTS_BASE=${RESULTS_DIR:-$HOME/results}
-LATEST_RUN=$(ls -td "${RESULTS_BASE}"/* | head -n1)
-cp -a "${LATEST_RUN}" "./tools/node_bench/examples/gcp_c4d_standard_4/"
-```
+- 4K randread: QD1 ~2.0k IOPS; QD32 ~3.1k IOPS (p99 ~17 ms)
+- 4K randwrite: QD1 ~2.5k IOPS; QD32 ~3.1k IOPS (p99 ~17 ms)
+- 1M sequential: read ~155 MiB/s; write ~155 MiB/s (p99 ~100–135 ms)
+- 4K randrw 70/30 QD16: read ~2.1k / write ~0.9k IOPS (p99 ~8.2 ms)
 
-Expected artifacts to store here:
+Artifacts in this folder:
+
 - `summary.txt` (canonical log)
 - `fio_*.json` (raw fio outputs)
-- Any additional notes about the run (e.g., package versions, whether sudo was required)
+- Optional notes: package versions, sudo usage, network conditions, etc.
