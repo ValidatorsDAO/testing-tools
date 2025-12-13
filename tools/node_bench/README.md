@@ -17,16 +17,22 @@ node_bench is a reproducible benchmark for Linux nodes (VPS / Bare Metal / Cloud
 
 ## Quick Start (curl)
 
-Small disks / test VMs (10–20GB):
+Defaults (fio dir `/var/tmp`, fio size 32GB, runtime 60s, ramp 10s):
 
 ```bash
-curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s -- --fio-dir /var/tmp --fio-size-gb 4
+curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash
 ```
 
-Large NVMe disks (50GB+):
+Small disks / test VMs (≈10–20GB free): shrink the fio file.
 
 ```bash
-curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s -- --fio-dir /var/tmp --fio-size-gb 64
+curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s -- --fio-size-gb 4
+```
+
+Large NVMe disks (50GB+ free): lengthen the fio file.
+
+```bash
+curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s -- --fio-size-gb 64
 ```
 
 ## Requirements
@@ -39,7 +45,7 @@ curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s
 
 ## Disk-size guidance
 
-- 4GB is valid for small disks because direct I/O avoids the page cache and keeps the test file compact; the script checks free space to prevent ENOSPC.
+- Default fio file size is 32GB (time_based + direct I/O). Use `--fio-size-gb 4` for cramped disks or a quick sweep; it stays uncached because of direct I/O.
 - 64GB is recommended only when the disk has room (e.g., larger NVMe volumes) to provide a longer run; use it only when disk space permits.
 - The script refuses to run if there is insufficient free disk space.
 
@@ -72,12 +78,18 @@ RESULTS_BASE=${RESULTS_DIR:-$HOME/results}; grep -n "extracted metrics" -A20 "$(
 
 ## Safety notes
 
-- Use `/var/tmp` as the `--fio-dir` rather than `/` to avoid filling the root filesystem.
+- `--fio-dir` defaults to `/var/tmp`; keep it unless you have a specific mount to target to avoid filling the root filesystem.
 - fio writes a temporary test file and the script removes it when the run finishes; if a previous run left `node_bench_fio_testfile.dat` (or older `erpc_bench_fio_testfile.dat`) anywhere under the target directory, the script deletes it before running new checks.
+- On apt-based systems, the script configures `needrestart` to list-only mode (no automatic service restarts) to avoid dropping SSH sessions during dependency installs.
 
 ## Examples
 
 Example environments and a place to store collected run artifacts live under `tools/node_bench/examples/`:
 
+- `erpc_vps_ams_4/` — ERPC VPS (AMD Turin / EPYC, 4 vCPU / 16GB RAM / 50GB disk, Amsterdam).
 - `erpc_super_vps_ams_4/` — ERPC Super VPS (AMD Ryzen 9 9950X slice, 4 vCPU / 16GB RAM / 100GB disk, Amsterdam).
 - `gcp_c4d_standard_4/` — Google Cloud c4d-standard-4 (AMD Turin, 4 vCPU / 15GB RAM / 10GB SSD).
+
+## Community
+
+Join the Validators DAO official Discord for run reports, tips, and Q&A: https://discord.com/invite/C7ZQSrCkYR
