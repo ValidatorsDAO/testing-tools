@@ -2,12 +2,12 @@
 
 ## Overview
 
-node_bench is a reproducible benchmark for Linux nodes (VPS / Bare Metal / Cloud). It exercises CPU with sysbench, memory with STREAM (auto-installs by default; use `--allow-missing-stream` to skip), and disk with fio using direct I/O, fixed profiles, and JSON output. It prints commands to the console, logs everything, and fails fast with clear reasons (permissions, missing directory, insufficient disk space). The maintained script is hosted at [https://storage-for-testing.erpc.global/tools/node_bench.sh](https://storage-for-testing.erpc.global/tools/node_bench.sh).
+node_bench is a reproducible benchmark for Linux nodes (VPS / Bare Metal / Cloud). It exercises CPU with sysbench, memory with STREAM (required by default; the script auto-installs or builds it from source, and you can use `--allow-missing-stream` to skip), and disk with fio using direct I/O, fixed profiles, and JSON output. It prints commands to the console, logs everything, and fails fast with clear reasons (permissions, missing directory, insufficient disk space). The maintained script is hosted at [https://storage-for-testing.erpc.global/tools/node_bench.sh](https://storage-for-testing.erpc.global/tools/node_bench.sh).
 
 ## What it measures
 
 - CPU: `sysbench cpu` with a thread sweep (1, 2, 4, 8, 16, 32) clamped to available vCPUs; each run logs the full command.
-- Memory: STREAM (auto-installs by default; falls back only with `--allow-missing-stream`), raw output.
+- Memory: STREAM (auto-installs by default, builds from source if needed; falls back only with `--allow-missing-stream`), raw output.
 - Disk: `fio` direct I/O, time_based workloads with JSON output:
   - 4K randread QD1 / QD32
   - 4K randwrite QD1 / QD32
@@ -34,6 +34,7 @@ curl -fsSL https://storage-for-testing.erpc.global/tools/node_bench.sh | bash -s
 - bash required (do not run with sh/dash)
 - Linux
 - sysbench and fio are auto-installed if permitted (apt/dnf/yum/apk). If auto-install is disabled or sudo is not available, install them manually.
+- STREAM is required by default: the script first attempts package installs (stream/stream-benchmark) and then falls back to fetching the official `stream.c` and compiling it with a local C compiler. If no compiler is present, it will try to install `gcc`/`build-base` when auto-install is enabled. Use `--allow-missing-stream` if you explicitly want to skip memory results.
 - jq optional (for extracting p99 latency from fio JSON).
 
 ## Disk-size guidance

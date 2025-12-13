@@ -54,6 +54,8 @@ STREAM_INSTALL_ATTEMPTED=0
 STREAM_INSTALL_MESSAGE=""
 STREAM_INSTALL_PACKAGE=""
 STREAM_PRESENT=0
+STREAM_BINARY="stream"
+STREAM_BUILD_MESSAGE=""
 
 # -----------------------------------------------------------------------------
 # CLI flags
@@ -183,17 +185,127 @@ pkg_install() {
   fi
 }
 
+ensure_c_compiler_for_stream() {
+  local cc
+  cc="$(command -v cc || command -v gcc || command -v clang || true)"
+  if [[ -n "$cc" ]]; then
+    echo "$cc"
+    return 0
+  fi
+
+  [[ "${AUTO_INSTALL}" -eq 1 ]] || { STREAM_BUILD_MESSAGE="No C compiler found for STREAM build and auto-install disabled (--no-install or AUTO_INSTALL=0)."; return 1; }
+  if ! need_root_or_sudo; then
+    STREAM_BUILD_MESSAGE="No C compiler found for STREAM build and sudo/root is not available non-interactively."
+    return 1
+  fi
+
+  local SUDO; SUDO="$(sudo_prefix)"
+  if have apt-get; then
+    note "Installing gcc for STREAM build via apt-get"
+    cmd ${SUDO} apt-get update -y
+    if ! cmd ${SUDO} apt-get install -y gcc; then
+      STREAM_BUILD_MESSAGE="Failed to install gcc via apt-get for STREAM build."
+      return 1
+    fi
+  elif have dnf; then
+    note "Installing gcc for STREAM build via dnf"
+    if ! cmd ${SUDO} dnf install -y gcc; then
+      STREAM_BUILD_MESSAGE="Failed to install gcc via dnf for STREAM build."
+      return 1
+    fi
+  elif have yum; then
+    note "Installing gcc for STREAM build via yum"
+    if ! cmd ${SUDO} yum install -y gcc; then
+      STREAM_BUILD_MESSAGE="Failed to install gcc via yum for STREAM build."
+      return 1
+    fi
+  elif have apk; then
+    note "Installing build-base for STREAM build via apk"
+    if ! cmd ${SUDO} apk add --no-cache build-base; then
+      STREAM_BUILD_MESSAGE="Failed to install build-base via apk for STREAM build."
+      return 1
+    fi
+  else
+    STREAM_BUILD_MESSAGE="No supported package manager to install a C compiler for STREAM build."
+    return 1
+  fi
+
+  cc="$(command -v cc || command -v gcc || command -v clang || true)"
+  if [[ -z "$cc" ]]; then
+    STREAM_BUILD_MESSAGE="C compiler install attempted but compiler is still unavailable."
+    return 1
+  fi
+
+  echo "$cc"
+}
+
+build_stream_from_source() {
+  STREAM_BUILD_MESSAGE=""
+
+  local cc
+  cc="$(ensure_c_compiler_for_stream)" || return 1
+
+  local build_dir
+  build_dir="$(mktemp -d /tmp/node_bench_stream_XXXXXX 2>/dev/null || true)"
+  [[ -n "$build_dir" ]] || { STREAM_BUILD_MESSAGE="Failed to create temporary directory for STREAM build."; return 1; }
+
+  local src="${build_dir}/stream.c"
+  local url="https://www.cs.virginia.edu/stream/FTP/Code/stream.c"
+
+  if have curl; then
+    note "Fetching STREAM source from ${url}"
+    if ! curl -fsSL "$url" -o "$src"; then
+      STREAM_BUILD_MESSAGE="Failed to download STREAM source from ${url}"
+      return 1
+    fi
+  elif have wget; then
+    note "Fetching STREAM source from ${url} (via wget)"
+    if ! wget -qO "$src" "$url"; then
+      STREAM_BUILD_MESSAGE="Failed to download STREAM source from ${url}"
+      return 1
+    fi
+  else
+    STREAM_BUILD_MESSAGE="Cannot fetch STREAM source: need curl or wget."
+    return 1
+  fi
+
+  local target="${build_dir}/stream"
+  local compile_log="${build_dir}/compile.log"
+
+  note "Building STREAM from source using ${cc} (attempting OpenMP, falling back if unavailable)"
+  if "$cc" -O3 -fopenmp "$src" -o "$target" >"$compile_log" 2>&1; then
+    chmod +x "$target" || true
+    PATH="$(dirname "$target"):$PATH"
+    STREAM_BINARY="$target"
+    STREAM_BUILD_MESSAGE="Built STREAM from source using ${cc} with OpenMP (path: ${target})"
+    return 0
+  fi
+
+  note "Retrying STREAM build without OpenMP flags"
+  if "$cc" -O3 "$src" -o "$target" >"$compile_log" 2>&1; then
+    chmod +x "$target" || true
+    PATH="$(dirname "$target"):$PATH"
+    STREAM_BINARY="$target"
+    STREAM_BUILD_MESSAGE="Built STREAM from source using ${cc} (no OpenMP) (path: ${target})"
+    return 0
+  fi
+
+  local tail_log
+  tail_log="$(tail -n 20 "$compile_log" 2>/dev/null || true)"
+  STREAM_BUILD_MESSAGE="Failed to build STREAM from source with ${cc}${tail_log:+; tail of build log:\n${tail_log}}"
+  return 1
+}
+
 install_stream_with_fallback() {
   STREAM_INSTALL_ATTEMPTED=1
   STREAM_INSTALL_MESSAGE=""
   STREAM_INSTALL_PACKAGE=""
+  STREAM_BINARY="stream"
 
   if [[ "${AUTO_INSTALL}" -ne 1 ]]; then
     STREAM_INSTALL_MESSAGE="Install not attempted: auto-install disabled (--no-install or AUTO_INSTALL=0)."
     return 1
   fi
-
-  need_root_or_sudo || { STREAM_INSTALL_MESSAGE="Cannot install: sudo not available non-interactively (or not root)."; return 1; }
 
   local SUDO; SUDO="$(sudo_prefix)"
 
@@ -216,31 +328,54 @@ install_stream_with_fallback() {
     install_cmd=(${SUDO} apk add --no-cache)
   else
     STREAM_INSTALL_MESSAGE="No supported package manager found for stream (need apt-get/dnf/yum/apk)."
-    return 1
+    pm=""
   fi
 
   local candidates=("stream" "stream-benchmark")
+  local install_error=""
 
-  if [[ "${#update_cmd[@]}" -gt 0 ]]; then
-    note "Updating package index via ${pm} for STREAM"
-    cmd "${update_cmd[@]}" || { STREAM_INSTALL_MESSAGE="${pm} update failed while preparing to install stream."; return 1; }
+  if [[ -n "$pm" && need_root_or_sudo ]]; then
+    if [[ "${#update_cmd[@]}" -gt 0 ]]; then
+      note "Updating package index via ${pm} for STREAM"
+      if ! cmd "${update_cmd[@]}"; then
+        install_error="${pm} update failed while preparing to install stream."
+      fi
+    fi
+
+    if [[ -z "${install_error}" ]]; then
+      local last_error=""
+      for pkg in "${candidates[@]}"; do
+        note "Attempting to install STREAM via ${pm}: package '${pkg}'"
+        if cmd "${install_cmd[@]}" "$pkg"; then
+          STREAM_INSTALL_PACKAGE="$pkg"
+          STREAM_INSTALL_MESSAGE="Installed '${pkg}' via ${pm}"
+          hash -r || true
+          STREAM_BINARY="$(command -v stream || echo "stream")"
+          return 0
+        else
+          local exit_code=$?
+          last_error="${pm} install exited ${exit_code} for package '${pkg}'"
+        fi
+      done
+
+      install_error="STREAM install failed via ${pm} (tried: ${candidates[*]}${last_error:+; last error: ${last_error}})"
+    fi
+  elif [[ -n "$pm" ]]; then
+    install_error="STREAM package install skipped: sudo/root not available non-interactively for ${pm}."
+  else
+    install_error="No supported package manager found for stream (need apt-get/dnf/yum/apk)."
   fi
 
-  local last_error=""
-  for pkg in "${candidates[@]}"; do
-    note "Attempting to install STREAM via ${pm}: package '${pkg}'"
-    if cmd "${install_cmd[@]}" "$pkg"; then
-      STREAM_INSTALL_PACKAGE="$pkg"
-      STREAM_INSTALL_MESSAGE="Installed '${pkg}' via ${pm}"
-      hash -r || true
-      return 0
-    else
-      local exit_code=$?
-      last_error="${pm} install exited ${exit_code} for package '${pkg}'"
-    fi
-  done
+  if build_stream_from_source; then
+    STREAM_INSTALL_MESSAGE="${install_error:+${install_error}; }${STREAM_BUILD_MESSAGE}"
+    return 0
+  fi
 
-  STREAM_INSTALL_MESSAGE="STREAM install failed via ${pm} (tried: ${candidates[*]}${last_error:+; last error: ${last_error}})"
+  if [[ -n "${STREAM_BUILD_MESSAGE}" ]]; then
+    STREAM_INSTALL_MESSAGE="${install_error}${install_error:+; }${STREAM_BUILD_MESSAGE}"
+  else
+    STREAM_INSTALL_MESSAGE="${install_error:-"STREAM install failed."}"
+  fi
   return 1
 }
 
@@ -378,6 +513,7 @@ note "STREAM availability"
 if have stream; then
   STREAM_PRESENT=1
   STREAM_INSTALL_MESSAGE="stream already present."
+  STREAM_BINARY="$(command -v stream || echo "stream")"
 else
   STREAM_PRESENT=0
   if [[ "${INSTALL_STREAM}" -eq 1 ]]; then
@@ -393,6 +529,9 @@ echo "STREAM_STATUS=$([[ "$STREAM_PRESENT" -eq 1 ]] && echo "present" || echo "a
 echo "STREAM_INSTALL_ATTEMPTED=$([[ "$STREAM_INSTALL_ATTEMPTED" -eq 1 ]] && echo "yes" || echo "no")"
 [[ -n "$STREAM_INSTALL_PACKAGE" ]] && echo "STREAM_INSTALL_PACKAGE=${STREAM_INSTALL_PACKAGE}"
 [[ -n "$STREAM_INSTALL_MESSAGE" ]] && echo "STREAM_NOTE=${STREAM_INSTALL_MESSAGE}"
+if [[ "$STREAM_PRESENT" -eq 1 && -n "$STREAM_BINARY" ]]; then
+  echo "STREAM_PATH=${STREAM_BINARY}"
+fi
 
 if [[ "$STREAM_PRESENT" -eq 0 && "$ALLOW_MISSING_STREAM" -eq 1 ]]; then
   echo "STREAM_NOT_MEASURED=1 (allowed by --allow-missing-stream)"
@@ -442,7 +581,11 @@ echo "Tools:"
 echo "  sysbench: $(sysbench --version 2>/dev/null | head -n1 || true)"
 echo "  fio:      $(fio --version 2>/dev/null || true)"
 echo "  jq:       $(jq --version 2>/dev/null || echo 'n/a')"
-echo "  stream:   $(have stream && echo present || echo absent)"
+stream_info="absent"
+if [[ "$STREAM_PRESENT" -eq 1 ]]; then
+  stream_info="${STREAM_BINARY:-$(command -v stream || echo "present")}"
+fi
+echo "  stream:   ${stream_info}"
 
 note "Hardware / OS details"
 cmd bash -lc 'echo "--- lscpu ---"; lscpu || true; echo; echo "--- free -h ---"; free -h || true; echo; echo "--- lsblk ---"; lsblk -o NAME,TYPE,SIZE,MODEL,ROTA,MOUNTPOINT,FSTYPE || true; echo; echo "--- df -hT ---"; df -hT || true'
@@ -467,7 +610,7 @@ done
 note "RAM Benchmark: STREAM"
 if [[ "${STREAM_PRESENT}" -eq 1 ]]; then
   echo "Running STREAM (raw output)."
-  cmd stream
+  cmd "${STREAM_BINARY:-stream}"
 else
   echo "STREAM NOT RUN: stream binary unavailable."
   echo "Reason: ${STREAM_INSTALL_MESSAGE:-unknown}"
