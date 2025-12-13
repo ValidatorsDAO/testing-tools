@@ -707,7 +707,7 @@ note "STREAM availability"
 if have stream; then
   STREAM_PRESENT=1
   STREAM_BINARY="$(command -v stream || echo "stream")"
-  ensure_stream_big_arrays || fatal "STREAM is present but could not ensure large-array build."
+  ensure_stream_big_arrays || fatal "STREAM is present but could not ensure large-array build. ${STREAM_BUILD_MESSAGE:-${STREAM_INSTALL_MESSAGE:-"See STREAM logs."}}"
   STREAM_INSTALL_MESSAGE="stream already present."
   if [[ "${STREAM_REBUILT}" -eq 1 ]]; then
     STREAM_INSTALL_MESSAGE="${STREAM_INSTALL_MESSAGE}; rebuilt STREAM with large arrays"
