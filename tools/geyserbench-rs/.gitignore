@@ -1,0 +1,6 @@
+/target
+config.toml
+*.log
+transaction_log_*.txt
+latency_distribution.json
+.env
