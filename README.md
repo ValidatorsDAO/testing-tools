@@ -51,6 +51,16 @@ The script:
 
 ## Tools
 
+### geyserbench-rs
+
+A source mirror of the `geyserbench-rs` benchmark tool for Solana gRPC-compatible data feeds.
+
+Contents:
+- Rust source tree mirrored under `tools/geyserbench-rs/`
+- configuration, protobuf definitions, and benchmark logic as maintained upstream
+
+This repository currently publishes `node_bench` directly to R2. `geyserbench-rs` is included here first as source so it can be reviewed, referenced, and wired into a dedicated publish flow later.
+
 ### node_bench
 
 A node-level benchmark for Linux systems.
